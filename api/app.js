@@ -28,9 +28,7 @@ app.get('/api/:mode/:type/:query', async (req, res) => {
                 const response = await axios.get(`https://api.themoviedb.org/3/search/movie`, { params: { api_key: process.env.TMDB_API_KEY, query: query } });
                 if (!response.data.results || response.data.results.length === 0) throw new Error('No movies found');
                 data = { mode, type, query, result: response.data.results.map(movie => ({ id: movie.id, title: movie.title, overview: movie.overview, release_date: movie.release_date, rating: movie.vote_average, poster: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null })) };
-            } else {
-                throw new Error(`Invalid parameters`);
-            }
+            } else throw new Error(`Invalid parameters`);
         } else if (mode === 'download') {
             if (type === 'music') {
                 data = { mode, type, query, result: "Music search placeholder" };
