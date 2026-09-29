@@ -1,0 +1,37 @@
+{
+  "name": "reflection",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node api/app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amanumar32/reflection.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/amanumar32/reflection/issues"
+  },
+  "homepage": "https://github.com/amanumar32/reflection#readme",
+  "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "telegram": "^2.26.22",
+    "ytsearch": "^1.0.4"
+  },
+  "allowScripts": {
+    "esbuild@0.27.0": true,
+    "bufferutil@4.1.0": true,
+    "utf-8-validate@5.0.10": true,
+    "es5-ext@0.10.64": true
+  },
+  "devDependencies": {
+    "dotenv": "^18.0.4"
+  }
+}
