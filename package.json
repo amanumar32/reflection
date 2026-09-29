@@ -20,9 +20,11 @@
   "homepage": "https://github.com/amanumar32/reflection#readme",
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
+    "axios": "^1.20.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "telegram": "^2.26.22",
+    "yt-search": "^2.13.1",
     "ytsearch": "^1.0.4"
   },
   "allowScripts": {
