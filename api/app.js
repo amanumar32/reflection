@@ -83,6 +83,7 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
             }
         } else if (mode === 'upload') {
             try {
+                if (!process.env.IMGBB_API_KEY) throw new Error('IMGBB_API_KEY environment variable is missing.');
                 if (!req.file) throw new Error('No image file uploaded');
                 const formData = new FormData();
                 formData.append('image', fs.createReadStream(req.file.path));
