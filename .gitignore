@@ -150,3 +150,5 @@ vite.config.ts.timestamp-*
 
 .vercel
 .env*
+test.*
+*.mp3
