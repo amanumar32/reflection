@@ -21,6 +21,8 @@
     "axios": "^1.20.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "form-data": "^4.0.6",
+    "input": "^1.0.1",
     "telegram": "^2.26.22",
     "youtube-dl-exec": "^3.1.15",
     "yt-search": "^2.13.1"
@@ -30,6 +32,7 @@
     "bufferutil@4.1.0": true,
     "utf-8-validate@5.0.10": true,
     "es5-ext@0.10.64": true,
-    "youtube-dl-exec@3.1.15": true
+    "youtube-dl-exec@3.1.15": true,
+    "core-js@2.6.12": true
   }
 }
