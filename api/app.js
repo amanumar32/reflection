@@ -38,11 +38,14 @@ app.get('/api/:mode/:type/:query', async (req, res) => {
         } else throw new Error('Bad request');
         res.json({ success: true, data });
     } catch (error) {
-        console.log(error);
+        console.log(error.message);
         res.status(500).json({ success: false, message: error.message });
     }
 });
 
 export default app;
 
-app.listen(PORT, () => console.log(`Server running on http://localhost:${process.env.PORT || 3000}`));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
