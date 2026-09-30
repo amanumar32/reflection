@@ -87,10 +87,16 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
                 if (!req.file) throw new Error('No image file uploaded');
                 const formData = new FormData();
                 formData.append('image', fs.createReadStream(req.file.path));
-                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, formData, { headers: formData.getHeaders() });
+                const headers = await new Promise((resolve, reject) => {
+                    formData.getLength((err, length) => {
+                        if (err) return reject(err);
+                        resolve({ ...formData.getHeaders(), 'Content-Length': length });
+                    });
+                });
+                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, formData, { headers });
                 if (!response.data || !response.data.success) throw new Error('ImgBB upload failed');
                 const img = response.data.data;
-                res.json({ data: { mode: 'upload', result: { url: img.url, display_url: img.display_url, delete_url: img.delete_url, size: img.size, mime: img.image.mime } } });
+                return res.json({ data: { mode: 'upload', result: { url: img.url, display_url: img.display_url, delete_url: img.delete_url, size: img.size, mime: img.image.mime } } });
             } finally {
                 if (fs.existsSync(req.file?.path)) fs.unlinkSync(req.file?.path);
             }
