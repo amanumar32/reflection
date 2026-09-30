@@ -96,7 +96,7 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
         }
         res.json({ data });
     } catch (error) {
-        console.error(error);
+        console.error(error.message);
         res.status(500).json({ error: error.message || 'Internal Server Error' });
     }
 });
