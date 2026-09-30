@@ -17,7 +17,6 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "axios": "^1.20.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
