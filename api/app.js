@@ -49,10 +49,11 @@ app.get('/api/:mode/:type', async (req, res) => {
                     url = search.videos[0].url;
                     title = search.videos[0].title;
                 }
-                const output_base = path.join(os.tmpdir(), `${Date.now()}_${title.replace(/[^a-zA-Z0-9]/g, ' ')}`);
+                const output_base = path.join(os.tmpdir(), `${Date.now()}_${title.replace(/[^a-zA-Z0-9]/g, '_')}`);
                 const result = await youtubeDl.exec(url, {
                     output: `${output_base}.%(ext)s`,
                     format: type === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
+                    cookies: path.join(process.cwd(), 'cookies.txt'),
                     jsRuntimes: 'node',
                     ...(type === 'audio' ? { extractAudio: true, audioFormat: 'mp3' } : { mergeOutputFormat: 'mp4' }),
                     print: 'after_move:filepath'
