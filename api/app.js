@@ -39,11 +39,10 @@ app.get('/api/:mode/:type/:query', async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.log(error);
-        res.status(400).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 
 export default app;
 
-
-// if (process.env.NODE_ENV !== 'production') app.listen(PORT, () => console.log(`Server running on http://localhost:${process.env.PORT || 3000}`));
+app.listen(PORT, () => console.log(`Server running on http://localhost:${process.env.PORT || 3000}`));
