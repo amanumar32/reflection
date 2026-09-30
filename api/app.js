@@ -7,19 +7,22 @@ import youtubeDl from 'youtube-dl-exec';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import multer from 'multer';
 
 const app = express();
 
 app.use(express.json());
 app.use(cors());
 
+const upload = multer({ dest: os.tmpdir() });
+
 app.get('/api', (req, res) => res.json({ message: "API is up and running!" }));
 
-app.get('/api/:mode/:type', async (req, res) => {
+app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
     try {
         const { mode, type } = req.params;
         const query = req.query.query;
-        if (!query) throw new Error('Query parameter is required');
+        if (!query && mode !== 'upload') throw new Error('Query parameter is required');
         const data = { mode, type, query, result: null };
         if (mode === 'search') {
             if (type === 'music') {
@@ -78,8 +81,19 @@ app.get('/api/:mode/:type', async (req, res) => {
             } finally {
                 if (fs.existsSync(temp)) fs.unlinkSync(temp);
             }
-        } else throw new Error('Bad request mode');
-
+        } else if (mode === 'upload') {
+            try {
+                if (!req.file) throw new Error('No image file uploaded');
+                const formData = new FormData();
+                formData.append('image', fs.createReadStream(req.file.path));
+                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, formData, { headers: formData.getHeaders() });
+                if (!response.data || !response.data.success) throw new Error('ImgBB upload failed');
+                const img = response.data.data;
+                res.json({ data: { mode: 'upload', result: { url: img.url, display_url: img.display_url, delete_url: img.delete_url, size: img.size, mime: img.image.mime } } });
+            } finally {
+                if (fs.existsSync(req.file?.path)) fs.unlinkSync(req.file?.path);
+            }
+        }
         res.json({ data });
     } catch (error) {
         console.error(error);

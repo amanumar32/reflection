@@ -152,3 +152,4 @@ vite.config.ts.timestamp-*
 .env*
 test.*
 *.mp3
+*.png
