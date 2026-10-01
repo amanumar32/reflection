@@ -2,7 +2,7 @@ import express from 'express';
 import cors from "cors";
 import axios from 'axios';
 import yts from 'yt-search';
-import FormData from 'form-data';
+import Form_Data from 'form-data';
 import youtubeDl from 'youtube-dl-exec';
 import fs from 'fs';
 import path from 'path';
@@ -72,7 +72,7 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
             if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file');
             try {
                 const stats = fs.statSync(temp);
-                const formData = new FormData();
+                const formData = new Form_Data();
                 formData.append("reqtype", "fileupload");
                 formData.append("time", "24h");
                 formData.append("fileToUpload", fs.createReadStream(temp), { filename: file_name, contentType: content_type });
@@ -85,15 +85,9 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
             try {
                 if (!process.env.IMGBB_API_KEY) throw new Error('IMGBB_API_KEY environment variable is missing.');
                 if (!req.file) throw new Error('No image file uploaded');
-                const formData = new FormData();
-                formData.append('image', fs.createReadStream(req.file.path));
-                const headers = await new Promise((resolve, reject) => {
-                    formData.getLength((err, length) => {
-                        if (err) return reject(err);
-                        resolve({ ...formData.getHeaders(), 'Content-Length': length });
-                    });
-                });
-                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, formData, { headers });
+                const form = new Form_Data();
+                form.append('image', fs.createReadStream(req.file.path));
+                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, form, { headers: form.getHeaders() });
                 if (!response.data || !response.data.success) throw new Error('ImgBB upload failed');
                 const img = response.data.data;
                 return res.json({ data: { mode: 'upload', result: { url: img.url, display_url: img.display_url, delete_url: img.delete_url, size: img.size, mime: img.image.mime } } });
