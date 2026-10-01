@@ -85,9 +85,10 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
             try {
                 if (!process.env.IMGBB_API_KEY) throw new Error('IMGBB_API_KEY environment variable is missing.');
                 if (!req.file) throw new Error('No image file uploaded');
-                const form = new Form_Data();
-                form.append('image', fs.createReadStream(req.file.path));
-                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, form, { headers: form.getHeaders() });
+                const base64Image = fs.readFileSync(req.file.path, { encoding: 'base64' });
+                const params = new URLSearchParams();
+                params.append('image', base64Image);
+                const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, params);
                 if (!response.data || !response.data.success) throw new Error('ImgBB upload failed');
                 const img = response.data.data;
                 return res.json({ data: { mode: 'upload', result: { url: img.url, display_url: img.display_url, delete_url: img.delete_url, size: img.size, mime: img.image.mime } } });
