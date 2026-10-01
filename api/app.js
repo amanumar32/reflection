@@ -42,17 +42,18 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
             let temp = null;
             let file_name = '';
             let content_type = '';
+            const additional = { title: '', thumbnail: '' }
             if (['audio', 'video'].includes(type)) {
                 let url = query;
-                let title = query;
                 const ext = type === 'audio' ? 'mp3' : 'mp4';
                 if (!/(?:https?:\/\/)?(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:watch\?v=|v\/|embed\/|shorts\/|playlist\?list=)?)([a-zA-Z0-9_-]{11})/i.test(query)) {
                     const search = await yts(query);
                     if (!search || !search.videos.length) throw new Error('No media found!');
                     url = search.videos[0].url;
-                    title = search.videos[0].title;
+                    additional.title = search.videos[0].title;
+                    additional.thumbnail = search.videos[0].thumbnail;
                 }
-                const output_base = path.join(os.tmpdir(), `${Date.now()}_${title.replace(/[^a-zA-Z0-9]/g, '_')}`);
+                const output_base = path.join(os.tmpdir(), `${Date.now()}_${additional.title.replace(/[^a-zA-Z0-9]/g, '_')}`);
                 const result = await youtubeDl.exec(url, {
                     output: `${output_base}.%(ext)s`,
                     format: type === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
@@ -77,7 +78,7 @@ app.all('/api/:mode/:type', upload.single('image'), async (req, res) => {
                 formData.append("time", "24h");
                 formData.append("fileToUpload", fs.createReadStream(temp), { filename: file_name, contentType: content_type });
                 const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, { headers: formData.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity });
-                data.result = { url: response.data.trim(), expires: "24h", title: file_name, size: stats.size };
+                data.result = { url: response.data.trim(), expires: "24h", title: additional.title, thumbnail: additional.thumbnail, size: stats.size };
             } finally {
                 if (fs.existsSync(temp)) fs.unlinkSync(temp);
             }
