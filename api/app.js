@@ -38,8 +38,75 @@ class Helper {
         fs.writeFileSync(cache_path, JSON.stringify(serialized, null, 2));
     }
     advanced_search(query = '', items = []) {
-        query = query.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
-        return items.filter(i => i.startsWith(query) || i.includes(query) || i.split(' ').some(r => query.split(' ').some(e => e.includes(r) || r.includes(e)))); //TODO: more advanced search that returns a list of `items` that match `query`
+        if (!query || !items || !items.length) return [];
+        const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
+        const cleanQuery = normalize(query);
+        if (!cleanQuery) return [];
+        const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
+        const levenshtein = (a, b) => {
+            if (a === b) return 0;
+            if (!a.length) return b.length;
+            if (!b.length) return a.length;
+            const row = Array.from({ length: a.length + 1 }, (_, i) => i);
+            for (let i = 1; i <= b.length; i++) {
+                let prev = i;
+                for (let j = 1; j <= a.length; j++) {
+                    const val = (b[i - 1] === a[j - 1]) ? row[j - 1] : Math.min(row[j - 1], row[j], prev) + 1;
+                    row[j - 1] = prev;
+                    prev = val;
+                }
+                row[a.length] = prev;
+            }
+            return row[a.length];
+        };
+        const getSimilarity = (s1, s2) => {
+            const maxLen = Math.max(s1.length, s2.length);
+            if (maxLen === 0) return 1.0;
+            return 1 - (levenshtein(s1, s2) / maxLen);
+        };
+        const scored = items.map(item => {
+            const cleanItem = normalize(item);
+            if (!cleanItem) return { item, score: 0 };
+            if (cleanItem === cleanQuery) return { item, score: 100 };
+            if (cleanItem.startsWith(cleanQuery)) return { item, score: 90 };
+            if (cleanItem.includes(cleanQuery)) return { item, score: 80 };
+            const itemTokens = cleanItem.split(/\s+/).filter(Boolean);
+            let totalTokenScore = 0;
+            let matchedCount = 0;
+            for (const qToken of queryTokens) {
+                let bestTokenSim = 0;
+                for (const iToken of itemTokens) {
+                    if (iToken === qToken) {
+                        bestTokenSim = 1.0;
+                        break;
+                    }
+                    if (iToken.startsWith(qToken) || qToken.startsWith(iToken)) {
+                        bestTokenSim = Math.max(bestTokenSim, 0.85);
+                    } else if (iToken.includes(qToken) || qToken.includes(iToken)) {
+                        bestTokenSim = Math.max(bestTokenSim, 0.7);
+                    } else if (qToken.length >= 3 && iToken.length >= 3) {
+                        const sim = getSimilarity(qToken, iToken);
+                        if (sim >= 0.6) {
+                            bestTokenSim = Math.max(bestTokenSim, sim * 0.8);
+                        }
+                    }
+                }
+                if (bestTokenSim > 0.3) {
+                    matchedCount++;
+                    totalTokenScore += bestTokenSim;
+                }
+            }
+            const queryCoverage = totalTokenScore / queryTokens.length;
+            const overallSim = getSimilarity(cleanQuery, cleanItem);
+            let score = (queryCoverage * 60) + (overallSim * 25);
+            if (matchedCount === queryTokens.length) score += 15;
+            return { item, score };
+        });
+
+        return scored
+            .filter(entry => entry.score >= 25)
+            .sort((a, b) => b.score - a.score)
+            .map(entry => entry.item);
     }
 }
 const { load_cache, save_cache, advanced_search } = new Helper();
