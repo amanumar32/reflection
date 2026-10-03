@@ -219,7 +219,7 @@ app.get('/api/download/:type', async (req, res) => {
                 const match = advanced_search(query, Array.from(cache.movies.keys()))[0];
                 if (!match) throw new Error(`${query} not found in database. Try spelling it a different way or request an admin to add the movie to the database.`);
                 const { title, messageId, filename } = cache.movies.get(match);
-                const msg = await tg_client.getMessages(channel, { ids: messageId });
+                const msg = (await tg_client.getMessages(channel, { ids: messageId }))[0];
                 if (!msg || !msg.media) throw new Error('Failed to retrieve the media from Telegram.');
                 temp = path.join(os.tmpdir(), `${Date.now()}_${filename}`);
                 await tg_client.downloadMedia(msg, { outputFile: temp });
@@ -244,7 +244,7 @@ app.get('/api/download/:type', async (req, res) => {
         data.expires = Date.now() + (1000 * 60 * 60 * 2);
         res.json({ ...data });
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
         res.status(400).json({ error: error.message || 'Internal Server Error' });
     } finally {
         if (temp && fs.existsSync(temp)) fs.unlinkSync(temp);
