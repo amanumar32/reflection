@@ -16,18 +16,45 @@ app.use(express.json());
 app.use(cors());
 
 const upload = multer({ dest: os.tmpdir() });
-let cache = { expires: Date.now() + (1000 * 60 * 60 * 3), movies: new Map() };
 const cache_path = path.join(process.cwd(), 'cache.json');
-if (!fs.existsSync(cache_path)) fs.writeFileSync(cache_path, JSON.stringify(cache));
+
+let cache = { expires: 0, movies: new Map() };
+let tg_client = null;
+
+class Helper {
+    load_cache() {
+        if (fs.existsSync(cache_path)) {
+            try {
+                const raw = fs.readFileSync(cache_path, 'utf8');
+                const data = JSON.parse(raw);
+                if (data && data.expires > Date.now()) cache = { expires: data.expires, movies: new Map(Object.entries(data.movies || {})) };
+            } catch (err) {
+                console.error("Failed to read cache file:", err.message);
+            }
+        }
+    }
+    save_cache() {
+        const serialized = { expires: cache.expires, movies: Object.fromEntries(cache.movies) };
+        fs.writeFileSync(cache_path, JSON.stringify(serialized, null, 2));
+    }
+    advanced_search(query = '', items = []) {
+        query = query.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
+        return items.filter(i => i.startsWith(query) || i.includes(query) || i.split(' ').some(r => query.split(' ').some(e => e.includes(r) || r.includes(e)))); //TODO: more advanced search that returns a list of `items` that match `query`
+    }
+}
+const { load_cache, save_cache, advanced_search } = new Helper();
+
+
+load_cache();
 
 app.get('/api', (req, res) => res.json({ message: "API is up and running!" }));
 
 app.get('/api/search/:type', async (req, res) => {
     const { type } = req.params;
     const { query } = req.query;
-    if (!query) throw new Error('Query parameter is required');
     const data = { mode: 'search', type, query, results: [], length: 0 };
     try {
+        if (!query) throw new Error('Query parameter is required');
         if (type === 'music') {
             const response = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
             if (!response.data) throw new Error('No music found');
@@ -55,13 +82,13 @@ app.get('/api/search/:type', async (req, res) => {
 });
 
 app.get('/api/download/:type', async (req, res) => {
+    const { type } = req.params;
+    const { query, media = 'video' } = req.query;
+    const data = { mode: 'download', type, query, media, title: '', thumbnail: '', mimetype: '', size: 0, url: '', expires: Date.now() };
+    let temp = '', file_name = '';
+
     try {
-        const { type } = req.params;
-        const { query, media = 'video' } = req.query;
         if (!query) throw new Error('Query parameter is required');
-        const data = { mode: 'download', type, query, media, title: '', thumbnail: '', mimetype: '', size: 0, url: '', expires: Date.now() };
-        let temp = '', file_name = '';
-        const additional = { title: '', thumbnail: '' }
         if (type === 'yt') {
             let url = query;
             if (!/(?:https?:\/\/)?(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:watch\?v=|v\/|embed\/|shorts\/|playlist\?list=)?)([a-zA-Z0-9_-]{11})/i.test(query)) {
@@ -72,83 +99,92 @@ app.get('/api/download/:type', async (req, res) => {
                 data.title = video.title;
                 data.thumbnail = video.thumbnail;
             }
-            const output_base = path.join(os.tmpdir(), `${Date.now()}_${(data.title || query).replace(/[^a-zA-Z0-9]/g, '_')}`);
-            const result = await youtubeDl.exec(url, {
+            const output_base = path.join(os.tmpdir(), `${Date.now()}_download`);
+            await youtubeDl.exec(url, {
                 output: `${output_base}.%(ext)s`,
                 format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
                 cookies: path.join(process.cwd(), 'cookies.txt'),
                 jsRuntimes: 'node',
                 ...(media === 'audio' ? { extractAudio: true, audioFormat: 'mp3' } : { mergeOutputFormat: 'mp4' }),
-                print: 'after_move:filepath'
             });
-            const output_lines = result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-            temp = output_lines.at(-1);
+            const files = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(path.basename(output_base)));
+            if (!files.length) throw new Error('Downloaded file not found');
+            temp = path.join(os.tmpdir(), files[0]);
             file_name = path.basename(temp);
             data.mimetype = media === 'audio' ? 'audio/mpeg' : 'video/mp4';
         } else if (type === 'movie') {
-            //TODO: Add channel database ID and replace `<channel-id>`
-            if (!process.env.TG_API_ID || !process.env.TG_API_HASH || !process.env.TG_SESSION) throw new Error("Required env data not provided");
-            recache();
-            const client = new TelegramClient(new StringSession(process.env.TG_SESSION), Number(process.env.TG_API_ID), process.env.TG_API_HASH, { connectionRetries: 5 });
-            const search = query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-            if (!search) throw new Error("Invalid search query");
-            let index = cache.movies;
-            if (!index.size) {
-                for await (const msg of client.iterMessages("<channel-id>")) {
-                    if (!msg.media) continue;
-                    let name = '';
-                    if (msg.media.document) {
-                        const attributes = msg.media.document.attributes || [];
-                        const attr = attributes.find(a => a.fileName);
-                        if (attr) name = attr.fileName;
+            if (!process.env.TG_API_ID || !process.env.TG_API_HASH || !process.env.TG_SESSION || !process.env.TG_CHANNEL_ID) throw new Error("Required Telegram environment variables are missing.");
+            load_cache();
+            const channel = process.env.TG_CHANNEL_ID.trim();
+            if (!tg_client) tg_client = new TelegramClient(new StringSession(process.env.TG_SESSION), Number(process.env.TG_API_ID), process.env.TG_API_HASH, { connectionRetries: 5 });
+            try {
+                await tg_client.connect();
+                if (!await tg_client.checkAuthorization()) throw new Error("Invalid or expired TG_SESSION.");
+                if (!cache.movies.size || Date.now() >= cache.expires) {
+                    cache.movies.clear();
+                    for await (const msg of tg_client.iterMessages(channel, { limit: 1000 })) {
+                        if (!msg.media) continue;
+                        let name = '';
+                        if (msg.media.document) {
+                            const attributes = msg.media.document.attributes || [];
+                            const attr = attributes.find(a => a.fileName);
+                            if (attr) name = attr.fileName;
+                        }
+                        if (!name) continue;
+                        if (!['.mkv', '.mp4', '.avi', '.mov'].some(ext => name.toLowerCase().endsWith(ext))) continue;
+                        let title = name
+                            .replace(/\[[^\]]*\]/g, '')
+                            .replace(/\((?![0-9]{4}\)[^)]*$).*?\)/g, '')
+                            .replace(/@\w+|https?:\/\/\S+/gi, '')
+                            .replace(/\b(WEB[- ]?DL|WEBRip|WEB[- ]?HD|BluRay|BRRip|BDRip|HDRip|DVDRip|HDTV|CAM|TS|TC|PreDvD|Dual[- ]Audio|ORG|ESubs|3D|6CH|2\.0|5\.1|7\.1|480p|576p|720p|1080p|2160p|4k|8k|x264|x265|h264|h265|HEVC|10bit|AAC2?|AC3|DTS|Pahe(?:\.in3?)?|YTS|RARBG|PSA|EVO|EMTV|asaomatv|fzmovies(?:\.net)?|VegaMovies|NetNaija(?:\.com)?|PSADOCX)\b/gi, '')
+                            .replace(/\b\d+(?:\.\d+)?(?:MB|GB)\b/gi, '')
+                            .replace(/[._-]+/g, ' ')
+                            .replace(/\b(mkv|mp4|avi|mov)\b/gi, '')
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        if (!title) continue;
+                        const key = title.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
+                        cache.movies.set(key, { title, messageId: msg.id, filename: name });
                     }
-                    if (!name) continue;
-                    if (['mkv', 'mp4', 'avi', 'mov'].some(r => !name.toLowerCase().endsWith(`.${r}`))) continue;
-                    const title = name.replace(/[._]+/g, ' ').replace(/\s+/g, ' ').replace(/\b(WEB[- ]?DL|WEBRip|BluRay|BRRip|BDRip|HDRip|DVDRip|HDTV|CAM|TS|TC|480p|576p|720p|1080p|2160p|4k|8k|x264|x265|h264|h265|HEVC|10bit|AAC|AC3|DTS|Pahe\.in|Pahe|YTS|RARBG|PSA|EVO|EMTV)\b/gi, '').replace(/\.(mkv|mp4|avi|mov)$/i, '').trim();
-                    if (!title) continue;
-                    cache.movies.set(title.replace(/[^a-z0-9]+/gi, ' ').trim(), { title, messageId: msg.id, filename: name });
+                    cache.expires = Date.now() + (1000 * 60 * 60 * 3);
+                    save_cache();
                 }
-                cache.expires = Date.now() + (1000 * 60 * 60 * 3);
-                fs.writeFileSync(path.join(cache_path), JSON.stringify(cache));
+                const match = advanced_search(query, Array.from(cache.movies.keys()))[0];
+                if (!match) throw new Error(`${query} not found in database. Try spelling it a different way or request an admin to add the movie to the database.`);
+                const { title, messageId, filename } = cache.movies.get(match);
+                const msg = await tg_client.getMessages(channel, { ids: messageId });
+                if (!msg || !msg.media) throw new Error('Failed to retrieve the media from Telegram.');
+                temp = path.join(os.tmpdir(), `${Date.now()}_${filename}`);
+                await tg_client.downloadMedia(msg, { outputFile: temp });
+                file_name = filename;
+                data.title = title;
+                const ext = path.extname(filename).slice(1).toLowerCase();
+                data.mimetype = ext === 'mkv' ? 'video/x-matroska' : ext === 'avi' ? 'video/x-msvideo' : ext === 'mov' ? 'video/quicktime' : 'video/mp4';
+                data.title = title;
+            } finally {
+                await tg_client.disconnect();
             }
-            let movie = null;
-            if (index.has(search)) movie = index.get(search);
-            else {
-                //TODO: advanced search for movie
-            }
-            if (!movie) throw new Error("No movies found in database.");
-            const messages = await client.getMessages("<channel-id>", { ids: movie.messageId });
-            const message = messages[0];
-            if (!message.media) throw new Error("No media contained for this item in the movie database");
-            file_name = movie.filename.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
-            temp = path.join(os.tmpdir(), `movie_${Date.now()}_${file_name}`);
-            await client.downloadMedia(message, { outputFile: temp });
-            const ext = path.extname(movie.filename).slice(1).toLowerCase();
-            data.mimetype = ext === 'mkv' ? 'video/x-matroska' : ext === 'avi' ? 'video/x-msvideo' : ext === 'mov' ? 'video/quicktime' : 'video/mp4';
-            data.title = movie.title;
         } else throw new Error('Unsupported download type');
         if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file');
         const stats = fs.statSync(temp);
         data.size = stats.size;
         const formData = new Form_Data();
-        // TODO: Replace catbox with another API
         formData.append("reqtype", "fileupload");
         formData.append("time", "24h");
         formData.append("fileToUpload", fs.createReadStream(temp), { filename: file_name, contentType: data.mimetype });
         const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, { headers: formData.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity });
         data.url = response.data.trim();
         data.expires = Date.now() + (1000 * 60 * 60 * 2);
-        // TODO: Replace catbox with another API
         res.json({ ...data });
     } catch (error) {
         console.error(error.message);
         res.status(400).json({ error: error.message || 'Internal Server Error' });
     } finally {
-        if (fs.existsSync(temp)) fs.unlinkSync(temp);
+        if (temp && fs.existsSync(temp)) fs.unlinkSync(temp);
     }
 });
 
-app.post('api/upload', upload.single('image'), async (req, res) => {
+app.post('/api/upload', upload.single('image'), async (req, res) => {
     const file = req.file;
     const data = { mode: 'upload', mimetype: '', url: '', size: 0 };
     try {
@@ -156,12 +192,10 @@ app.post('api/upload', upload.single('image'), async (req, res) => {
         if (!file) throw new Error('No image file uploaded');
         const stats = fs.statSync(file.path);
         data.size = stats.size;
-        //FIXME: IMGBB upload error
-        const base64 = fs.readFileSync(file.path, { encoding: '' });
+        const base64 = fs.readFileSync(file.path, { encoding: 'base64' });
         const params = new URLSearchParams();
         params.append('image', base64);
         const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, params);
-        //FIXME: IMGBB upload error
         const img = response.data.data;
         data.mimetype = img.image.mime;
         data.url = img.display_url;
@@ -173,12 +207,6 @@ app.post('api/upload', upload.single('image'), async (req, res) => {
         if (fs.existsSync(file?.path)) fs.unlinkSync(file?.path);
     }
 });
-
-function recache() {
-    const local = JSON.parse(fs.readFileSync(cache_path));
-    if (Date.now() >= local?.expires) return;
-    else cache = local;
-}
 
 export default app;
 
