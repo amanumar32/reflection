@@ -241,7 +241,7 @@ app.get('/api/download/:type', async (req, res) => {
         formData.append("fileToUpload", fs.createReadStream(temp), { filename: file_name, contentType: data.mimetype });
         const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, { headers: formData.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity });
         data.url = response.data.trim();
-        data.expires = Date.now() + (1000 * 60 * 60 * 2);
+        data.expires = Date.now() + (1000 * 60 * 60 * 24);
         res.json({ ...data });
     } catch (error) {
         console.error(error);
@@ -251,21 +251,32 @@ app.get('/api/download/:type', async (req, res) => {
     }
 });
 
-app.post('/api/upload', upload.single('image'), async (req, res) => {
+app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
+    const { type } = req.params;
     const file = req.file;
-    const data = { mode: 'upload', mimetype: '', url: '', size: 0 };
+    const data = { mode: 'upload', mimetype: '', url: '', size: 0, expires: Infinity };
     try {
-        if (!process.env.IMGBB_API_KEY) throw new Error('Required environment variable is missing.');
         if (!file) throw new Error('No image file uploaded');
         const stats = fs.statSync(file.path);
         data.size = stats.size;
-        const base64 = fs.readFileSync(file.path, { encoding: 'base64' });
-        const params = new URLSearchParams();
-        params.append('image', base64);
-        const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, params);
-        const img = response.data.data;
-        data.mimetype = img.image.mime;
-        data.url = img.display_url;
+        const formData = new Form_Data();
+        if (type === 'image') {
+            if (!process.env.IMGBB_API_KEY) throw new Error('Required environment variable is missing.');
+            const base64 = fs.readFileSync(file.path, { encoding: 'base64' });
+            const params = new URLSearchParams();
+            params.append('image', base64);
+            const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, params);
+            const img = response.data.data;
+            data.mimetype = img.image.mime;
+            data.url = img.display_url;
+        } else if (type === 'file') {
+            formData.append("reqtype", "fileupload");
+            formData.append("time", "24h");
+            formData.append("fileToUpload", fs.createReadStream(file.path));
+            const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, { headers: formData.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity });
+            data.url = response.data.trim();
+            data.expires = Date.now() + (1000 * 60 * 60 * 24);
+        }
         res.json({ ...data });
     } catch (error) {
         console.error(error.message);
