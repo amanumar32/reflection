@@ -23,6 +23,7 @@
     "form-data": "^4.0.6",
     "input": "^1.0.1",
     "multer": "^2.4.0",
+    "ruhend-scraper": "^10.0.3",
     "telegram": "^2.26.22",
     "youtube-dl-exec": "^3.1.15",
     "yt-search": "^2.13.1"
