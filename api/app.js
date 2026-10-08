@@ -125,7 +125,7 @@ app.get('/api/search/:type', async (req, res) => {
         if (type === 'music') {
             const response = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
             if (!response.data) throw new Error('No music found');
-            const list = response.data.data.map(itm => ({ id: itm.id, title: itm.title, preview: itm.preview, thumbnail: itm.album.cover, artist: itm.artist.name, album: itm.album.title }));
+            const list = response.data.data.map(itm => ({ id: itm.id, title: itm.title, preview: itm.preview, thumbnail: itm.album.cover_big, artist: itm.artist.name, album: itm.album.title }));
             data.results = list;
             data.length = list.length;
         } else if (type === 'yt') {
