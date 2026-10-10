@@ -172,6 +172,7 @@ app.get('/api/download/:type', async (req, res) => {
                 format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
                 cookies: path.join(process.cwd(), 'cookies.txt'),
                 jsRuntimes: 'node',
+                remoteComponents: 'ejs:github',
                 ...(media === 'audio' ? { extractAudio: true, audioFormat: 'mp3' } : { mergeOutputFormat: 'mp4' }),
             });
             const files = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(path.basename(output_base)));
