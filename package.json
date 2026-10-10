@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "node --env-file=.env api/app.js",
-    "start": "node api/app.js",
-    "test": "node --env-file=.env.local api/test.js"
+    "dev": "node --env-file=.env app.js",
+    "start": "node app.js",
+    "test": "node --env-file=.env api/test.js"
   },
   "repository": {
     "type": "git",
