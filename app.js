@@ -171,7 +171,7 @@ app.get('/api/download/:type', async (req, res) => {
                 output: `${output_base}.%(ext)s`,
                 format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
                 cookies: path.join(process.cwd(), 'cookies.txt'),
-                jsRuntimes: 'node',
+                jsRuntimes: 'deno',
                 remoteComponents: 'ejs:github',
                 ...(media === 'audio' ? { extractAudio: true, audioFormat: 'mp3' } : { mergeOutputFormat: 'mp4' }),
             });
