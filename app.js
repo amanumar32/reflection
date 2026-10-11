@@ -2,7 +2,6 @@ import express from 'express';
 import cors from "cors";
 import axios from 'axios';
 import yts from 'yt-search';
-import Form_Data from 'form-data';
 import youtubeDl from 'youtube-dl-exec';
 import fs from 'fs';
 import path from 'path';
@@ -237,11 +236,16 @@ app.get('/api/download/:type', async (req, res) => {
         if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file', { cause: 500 });
         const stats = fs.statSync(temp);
         data.size = stats.size;
-        const formData = new Form_Data();
+        const fileBuffer = fs.readFileSync(temp);
+        const blob = new Blob([fileBuffer], { type: data.mimetype });
+        const formData = new FormData();
         formData.append("reqtype", "fileupload");
         formData.append("time", "24h");
-        formData.append("fileToUpload", fs.createReadStream(temp), { filename: file_name, contentType: data.mimetype });
-        const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, { headers: formData.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity });
+        formData.append("fileToUpload", blob, file_name);
+        const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, {
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity
+        });
         data.url = response.data.trim();
         data.expires = Date.now() + (1000 * 60 * 60 * 24);
         res.json({ ...data });
@@ -272,10 +276,17 @@ app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
             data.mimetype = img.image.mime;
             data.url = img.display_url;
         } else if (type === 'file') {
+            const fileBuffer = fs.readFileSync(file.path);
+            const blob = new Blob([fileBuffer]);
+            const formData = new FormData();
             formData.append("reqtype", "fileupload");
             formData.append("time", "24h");
-            formData.append("fileToUpload", fs.createReadStream(file.path));
-            const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, { headers: formData.getHeaders(), maxBodyLength: Infinity, maxContentLength: Infinity });
+            formData.append("fileToUpload", blob, file.originalname || 'upload');
+            const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, {
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity
+            });
+
             data.url = response.data.trim();
             data.expires = Date.now() + (1000 * 60 * 60 * 24);
         }
