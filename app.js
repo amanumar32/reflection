@@ -10,6 +10,8 @@ import multer from 'multer';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import PQueue from 'p-queue';
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const download_queue = new PQueue({ concurrency: 1 });
 
@@ -22,6 +24,15 @@ const cache_path = path.join(process.cwd(), 'cache.json');
 
 let cache = { expires: 0, movies: new Map() };
 let tg_client = null;
+
+const s3Client = new S3Client({
+    region: "auto",
+    endpoint: process.env.R2_ENDPOINT,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
 
 class Helper {
     load_cache() {
@@ -110,8 +121,28 @@ class Helper {
             .sort((a, b) => b.score - a.score)
             .map(entry => entry.item);
     }
+    async upload_to_s3(fileBuffer, fileName, contentType) {
+        try {
+            const command = new PutObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME,
+                Key: fileName,
+                Body: fileBuffer,
+                ContentType: contentType,
+            });
+            await s3Client.send(command);
+            const getCommand = new GetObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME,
+                Key: fileName,
+            });
+            const signedUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 86400 });
+            return signedUrl;
+        } catch (error) {
+            console.error("Failed to upload to S3 or generate signed URL:", error);
+            throw error;
+        }
+    }
 }
-const { load_cache, save_cache, advanced_search } = new Helper();
+const { load_cache, save_cache, advanced_search, upload_to_s3 } = new Helper();
 
 
 load_cache();
@@ -184,73 +215,16 @@ app.get('/api/download/:type', async (req, res) => {
                 file_name = path.basename(temp);
                 data.mimetype = media === 'audio' ? 'audio/mpeg' : 'video/mp4';
             } else if (type === 'movie') {
-                throw new Error("This endpoint has been deprecated", { cause: 400 })
-                if (!process.env.TG_API_ID || !process.env.TG_API_HASH || !process.env.TG_SESSION || !process.env.TG_CHANNEL_ID) throw new Error("Required Telegram environment variables are missing.", { cause: 500 });
-                load_cache();
-                const channel = process.env.TG_CHANNEL_ID.trim();
-                if (!tg_client) tg_client = new TelegramClient(new StringSession(process.env.TG_SESSION), Number(process.env.TG_API_ID), process.env.TG_API_HASH, { connectionRetries: 5 });
-                try {
-                    await tg_client.connect();
-                    if (!await tg_client.checkAuthorization()) throw new Error("Invalid or expired TG_SESSION.", { cause: 500 });
-                    if (!cache.movies.size || Date.now() >= cache.expires) {
-                        cache.movies.clear();
-                        for await (const msg of tg_client.iterMessages(channel, { limit: 1000 })) {
-                            if (!msg.media) continue;
-                            let name = '';
-                            if (msg.media.document) {
-                                const attributes = msg.media.document.attributes || [];
-                                const attr = attributes.find(a => a.fileName);
-                                if (attr) name = attr.fileName;
-                            }
-                            if (!name) continue;
-                            if (!['.mkv', '.mp4', '.avi', '.mov'].some(ext => name.toLowerCase().endsWith(ext))) continue;
-                            let title = name
-                                .replace(/\[[^\]]*\]/g, '')
-                                .replace(/\((?![0-9]{4}\)[^)]*$).*?\)/g, '')
-                                .replace(/@\w+|https?:\/\/\S+/gi, '')
-                                .replace(/\b(WEB[- ]?DL|WEBRip|WEB[- ]?HD|BluRay|BRRip|BDRip|HDRip|DVDRip|HDTV|CAM|TS|TC|PreDvD|Dual[- ]Audio|ORG|ESubs|3D|6CH|2\.0|5\.1|7\.1|480p|576p|720p|1080p|2160p|4k|8k|x264|x265|h264|h265|HEVC|10bit|AAC2?|AC3|DTS|Pahe(?:\.in3?)?|YTS|RARBG|PSA|EVO|EMTV|asaomatv|fzmovies(?:\.net)?|VegaMovies|NetNaija(?:\.com)?|PSADOCX)\b/gi, '')
-                                .replace(/\b\d+(?:\.\d+)?(?:MB|GB)\b/gi, '')
-                                .replace(/[._-]+/g, ' ')
-                                .replace(/\b(mkv|mp4|avi|mov)\b/gi, '')
-                                .replace(/\s+/g, ' ')
-                                .trim();
-                            if (!title) continue;
-                            const key = title.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
-                            cache.movies.set(key, { title, messageId: msg.id, filename: name });
-                        }
-                        cache.expires = Date.now() + (1000 * 60 * 60 * 3);
-                        save_cache();
-                    }
-                    const match = advanced_search(query, Array.from(cache.movies.keys()))[0];
-                    if (!match) throw new Error(`${query} not found in database. Try spelling it a different way or request an admin to add the movie to the database.`, { cause: 404 });
-                    const { title, messageId, filename } = cache.movies.get(match);
-                    const msg = (await tg_client.getMessages(channel, { ids: messageId }))[0];
-                    if (!msg || !msg.media) throw new Error('Failed to retrieve the media from Telegram.', { cause: 500 });
-                    temp = path.join(os.tmpdir(), `${Date.now()}_${filename}`);
-                    await tg_client.downloadMedia(msg, { outputFile: temp });
-                    file_name = filename;
-                    data.title = title;
-                    const ext = path.extname(filename).slice(1).toLowerCase();
-                    data.mimetype = ext === 'mkv' ? 'video/x-matroska' : ext === 'avi' ? 'video/x-msvideo' : ext === 'mov' ? 'video/quicktime' : 'video/mp4';
-                    data.title = title;
-                } finally {
-                    await tg_client.disconnect();
-                }
+                throw new Error("This endpoint has been deprecated", { cause: 400 });
             } else throw new Error('Unsupported download type', { cause: 400 });
+
             if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file', { cause: 500 });
             const stats = fs.statSync(temp);
             data.size = stats.size;
             const fileBuffer = fs.readFileSync(temp);
-            const blob = new Blob([fileBuffer], { type: data.mimetype });
-            const formData = new FormData();
-            formData.append("reqtype", "fileupload");
-            formData.append("time", "24h");
-            formData.append("fileToUpload", blob, file_name);
-            const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, {
-                maxBodyLength: Infinity,
-                maxContentLength: Infinity
-            });
-            data.url = response.data.trim();
+            const unique = `${Date.now()}_${file_name}`;
+
+            data.url = await upload_to_s3(fileBuffer, unique, data.mimetype);
             data.expires = Date.now() + (1000 * 60 * 60 * 24);
             return data;
         });
@@ -268,10 +242,10 @@ app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
     const file = req.file;
     const data = { mode: 'upload', mimetype: '', url: '', size: 0, expires: Infinity };
     try {
-        if (!file) throw new Error('No image file uploaded', { cause: 400 });
+        if (!file) throw new Error('No file uploaded', { cause: 400 });
         const stats = fs.statSync(file.path);
         data.size = stats.size;
-        const formData = new FormData();
+
         if (type === 'image') {
             if (!process.env.IMGBB_API_KEY) throw new Error('Required environment variable is missing.', { cause: 500 });
             const base64 = fs.readFileSync(file.path, { encoding: 'base64' });
@@ -283,16 +257,9 @@ app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
             data.url = img.display_url;
         } else if (type === 'file') {
             const fileBuffer = fs.readFileSync(file.path);
-            const blob = new Blob([fileBuffer]);
-            formData.append("reqtype", "fileupload");
-            formData.append("time", "24h");
-            formData.append("fileToUpload", blob, file.originalname || 'upload');
-            const response = await axios.post("https://litterbox.catbox.moe/resources/internals/api.php", formData, {
-                maxBodyLength: Infinity,
-                maxContentLength: Infinity
-            });
-
-            data.url = response.data.trim();
+            const file_name = `${Date.now()}_${file.originalname || 'upload'}`;
+            data.mimetype = file.mimetype || 'application/octet-stream';
+            data.url = await upload_to_s3(fileBuffer, file_name, data.mimetype);
             data.expires = Date.now() + (1000 * 60 * 60 * 24);
         }
         res.json({ ...data });
