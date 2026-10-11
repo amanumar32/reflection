@@ -121,30 +121,30 @@ app.get('/api/search/:type', async (req, res) => {
     const { query } = req.query;
     const data = { mode: 'search', type, query, results: [], length: 0 };
     try {
-        if (!query) throw new Error('Query parameter is required');
+        if (!query) throw new Error('Query parameter is required', { cause: 400 });
         if (type === 'music') {
             const response = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
-            if (!response.data) throw new Error('No music found');
+            if (!response.data) throw new Error('No music found', { cause: 404 });
             const list = response.data.data.map(itm => ({ id: itm.id, title: itm.title, preview: itm.preview, thumbnail: itm.album.cover_big, artist: itm.artist.name, album: itm.album.title }));
             data.results = list;
             data.length = list.length;
         } else if (type === 'yt') {
             const search = await yts(query);
-            if (!search || !search.videos.length) throw new Error('No media found!');
+            if (!search || !search.videos.length) throw new Error('No media found!', { cause: 404 });
             const list = search.videos.map(itm => ({ id: itm.videoId, title: itm.title, author: itm.author.name, url: itm.url, thumbnail: itm.thumbnail, description: itm.description }));
             data.results = list;
             data.length = list.length;
         } else if (type === 'movie') {
             const response = await axios.get(`https://api.themoviedb.org/3/search/movie`, { params: { api_key: process.env.TMDB_API_KEY, query } });
-            if (!response.data) throw new Error('No movies found');
+            if (!response.data) throw new Error('No movies found', { cause: 404 });
             const list = response.data.results.map(movie => ({ id: movie.id, title: movie.title, overview: movie.overview, release_date: movie.release_date, rating: movie.vote_average, poster: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null }));
             data.results = list;
             data.length = list.length;
-        } else throw new Error(`Invalid type parameter`);
+        } else throw new Error('Invalid type parameter', { cause: 400 });
         res.json({ ...data });
     } catch (error) {
-        console.error(error.message);
-        res.status(400).json({ error: error.message || 'Internal Server Error' });
+        console.error(error);
+        res.status(error.cause || 500).json({ error: error.message || 'Internal Server Error' });
     }
 });
 
@@ -155,12 +155,12 @@ app.get('/api/download/:type', async (req, res) => {
     let temp = '', file_name = '';
 
     try {
-        if (!query) throw new Error('Query parameter is required');
+        if (!query) throw new Error('Query parameter is required', { cause: 400 });
         if (type === 'yt') {
             let url = query;
             if (!/(?:https?:\/\/)?(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:watch\?v=|v\/|embed\/|shorts\/|playlist\?list=)?)([a-zA-Z0-9_-]{11})/i.test(query)) {
                 const response = await yts(query).then(r => r);
-                if (!response || !response.videos.length) throw new Error('No media found!');
+                if (!response || !response.videos.length) throw new Error('No media found!', { cause: 404 });
                 const video = response.videos[0];
                 url = video.url;
                 data.title = video.title;
@@ -176,18 +176,19 @@ app.get('/api/download/:type', async (req, res) => {
                 ...(media === 'audio' ? { extractAudio: true, audioFormat: 'mp3' } : { mergeOutputFormat: 'mp4' }),
             });
             const files = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(path.basename(output_base)));
-            if (!files.length) throw new Error('Downloaded file not found');
+            if (!files.length) throw new Error('Downloaded file not found', { cause: 500 });
             temp = path.join(os.tmpdir(), files[0]);
             file_name = path.basename(temp);
             data.mimetype = media === 'audio' ? 'audio/mpeg' : 'video/mp4';
         } else if (type === 'movie') {
-            if (!process.env.TG_API_ID || !process.env.TG_API_HASH || !process.env.TG_SESSION || !process.env.TG_CHANNEL_ID) throw new Error("Required Telegram environment variables are missing.");
+            throw new Error("This endpoint has been deprecated", { cause: 400 })
+            if (!process.env.TG_API_ID || !process.env.TG_API_HASH || !process.env.TG_SESSION || !process.env.TG_CHANNEL_ID) throw new Error("Required Telegram environment variables are missing.", { cause: 500 });
             load_cache();
             const channel = process.env.TG_CHANNEL_ID.trim();
             if (!tg_client) tg_client = new TelegramClient(new StringSession(process.env.TG_SESSION), Number(process.env.TG_API_ID), process.env.TG_API_HASH, { connectionRetries: 5 });
             try {
                 await tg_client.connect();
-                if (!await tg_client.checkAuthorization()) throw new Error("Invalid or expired TG_SESSION.");
+                if (!await tg_client.checkAuthorization()) throw new Error("Invalid or expired TG_SESSION.", { cause: 500 });
                 if (!cache.movies.size || Date.now() >= cache.expires) {
                     cache.movies.clear();
                     for await (const msg of tg_client.iterMessages(channel, { limit: 1000 })) {
@@ -218,10 +219,10 @@ app.get('/api/download/:type', async (req, res) => {
                     save_cache();
                 }
                 const match = advanced_search(query, Array.from(cache.movies.keys()))[0];
-                if (!match) throw new Error(`${query} not found in database. Try spelling it a different way or request an admin to add the movie to the database.`);
+                if (!match) throw new Error(`${query} not found in database. Try spelling it a different way or request an admin to add the movie to the database.`, { cause: 404 });
                 const { title, messageId, filename } = cache.movies.get(match);
                 const msg = (await tg_client.getMessages(channel, { ids: messageId }))[0];
-                if (!msg || !msg.media) throw new Error('Failed to retrieve the media from Telegram.');
+                if (!msg || !msg.media) throw new Error('Failed to retrieve the media from Telegram.', { cause: 500 });
                 temp = path.join(os.tmpdir(), `${Date.now()}_${filename}`);
                 await tg_client.downloadMedia(msg, { outputFile: temp });
                 file_name = filename;
@@ -232,8 +233,8 @@ app.get('/api/download/:type', async (req, res) => {
             } finally {
                 await tg_client.disconnect();
             }
-        } else throw new Error('Unsupported download type');
-        if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file');
+        } else throw new Error('Unsupported download type', { cause: 400 });
+        if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file', { cause: 500 });
         const stats = fs.statSync(temp);
         data.size = stats.size;
         const formData = new Form_Data();
@@ -246,7 +247,7 @@ app.get('/api/download/:type', async (req, res) => {
         res.json({ ...data });
     } catch (error) {
         console.error(error);
-        res.status(400).json({ error: error.message || 'Internal Server Error' });
+        res.status(error.cause || 500).json({ error: error.message || 'Internal Server Error' });
     } finally {
         if (temp && fs.existsSync(temp)) fs.unlinkSync(temp);
     }
@@ -257,12 +258,12 @@ app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
     const file = req.file;
     const data = { mode: 'upload', mimetype: '', url: '', size: 0, expires: Infinity };
     try {
-        if (!file) throw new Error('No image file uploaded');
+        if (!file) throw new Error('No image file uploaded', { cause: 400 });
         const stats = fs.statSync(file.path);
         data.size = stats.size;
         const formData = new Form_Data();
         if (type === 'image') {
-            if (!process.env.IMGBB_API_KEY) throw new Error('Required environment variable is missing.');
+            if (!process.env.IMGBB_API_KEY) throw new Error('Required environment variable is missing.', { cause: 500 });
             const base64 = fs.readFileSync(file.path, { encoding: 'base64' });
             const params = new URLSearchParams();
             params.append('image', base64);
@@ -280,8 +281,8 @@ app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
         }
         res.json({ ...data });
     } catch (error) {
-        console.error(error.message);
-        res.status(400).json({ error: error.message || 'Internal Server Error' });
+        console.error(error);
+        res.status(error.cause || 500).json({ error: error.message || 'Internal Server Error' });
     } finally {
         if (fs.existsSync(file?.path)) fs.unlinkSync(file?.path);
     }

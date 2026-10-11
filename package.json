@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --env-file=.env app.js",
     "start": "node app.js",
-    "test": "node --env-file=.env api/test.js"
+    "test": "node --env-file=.env test.js"
   },
   "repository": {
     "type": "git",
