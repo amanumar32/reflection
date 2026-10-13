@@ -116,10 +116,11 @@ app.get('/api/download/:type', async (req, res) => {
                     data.thumbnail = video.thumbnail;
                 }
                 const output_base = path.join(os.tmpdir(), `${Date.now()}_${(data.title || query).replace(/[^a-zA-Z0-9]/g, '_')}`);
+                const cookies = path.join(process.cwd(), 'cookies.txt');
                 await youtubeDl.exec(url, {
                     output: `${output_base}.%(ext)s`,
                     format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
-                    cookies: path.join(process.cwd(), 'cookies.txt'),
+                    cookies: fs.existsSync(cookies) ? cookies : undefined,
                     jsRuntimes: 'node',
                     remoteComponents: 'ejs:github',
                     ...(media === 'audio' ? { extractAudio: true, audioFormat: 'mp3' } : { mergeOutputFormat: 'mp4' }),
