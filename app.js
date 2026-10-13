@@ -128,7 +128,7 @@ app.get('/api/download/:type', async (req, res) => {
                 const files = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(path.basename(output_base)));
                 if (!files.length) throw new Error('Downloaded file not found', { cause: 500 });
                 temp = path.join(os.tmpdir(), files[0]);
-                file_name = `${Date.now()}_${path.basename(temp)}`;
+                file_name = path.basename(temp);
                 data.mimetype = media === 'audio' ? 'audio/mpeg' : 'video/mp4';
             } else throw new Error('Unsupported download type', { cause: 400 });
 
