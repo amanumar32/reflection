@@ -119,7 +119,7 @@ app.get('/api/download/:type', async (req, res) => {
                 const cookies = path.join(process.cwd(), 'cookies.txt');
                 await youtubeDl.exec(url, {
                     output: `${output_base}.%(ext)s`,
-                    format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
+                    format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*[height<=720]+bestaudio/best[height<=720]',
                     cookies: fs.existsSync(cookies) ? cookies : undefined,
                     jsRuntimes: 'node',
                     remoteComponents: 'ejs:github',
