@@ -17,17 +17,12 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1149.0",
-    "@aws-sdk/s3-request-presigner": "^3.1149.0",
     "axios": "^1.20.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "form-data": "^4.0.6",
-    "input": "^1.0.1",
     "multer": "^2.4.0",
     "p-queue": "^9.3.5",
     "ruhend-scraper": "^10.0.3",
-    "telegram": "^2.26.22",
     "youtube-dl-exec": "^3.1.15",
     "yt-search": "^2.13.1"
   },

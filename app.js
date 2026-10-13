@@ -7,145 +7,61 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import multer from 'multer';
-import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions/index.js';
 import PQueue from 'p-queue';
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-
-const download_queue = new PQueue({ concurrency: 1 });
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-const upload = multer({ dest: os.tmpdir() });
-const cache_path = path.join(process.cwd(), 'cache.json');
+const configs = {
+    max_process_limit: 1,
+    max_file_size: 100 * 1024 * 1024, // 100 MB
+}
 
-let cache = { expires: 0, movies: new Map() };
-let tg_client = null;
+const _upload = multer({ dest: os.tmpdir() });
+const _queue = new PQueue({ concurrency: configs.max_process_limit });
 
-const s3Client = new S3Client({
-    region: "auto",
-    endpoint: process.env.R2_ENDPOINT,
-    credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-    },
-});
-
-class Helper {
-    load_cache() {
-        if (fs.existsSync(cache_path)) {
-            try {
-                const raw = fs.readFileSync(cache_path, 'utf8');
-                const data = JSON.parse(raw);
-                if (data && data.expires > Date.now()) cache = { expires: data.expires, movies: new Map(Object.entries(data.movies || {})) };
-            } catch (err) {
-                console.error("Failed to read cache file:", err.message);
-            }
-        }
-    }
-    save_cache() {
-        const serialized = { expires: cache.expires, movies: Object.fromEntries(cache.movies) };
-        fs.writeFileSync(cache_path, JSON.stringify(serialized, null, 2));
-    }
-    advanced_search(query = '', items = []) {
-        if (!query || !items || !items.length) return [];
-        const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
-        const cleanQuery = normalize(query);
-        if (!cleanQuery) return [];
-        const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
-        const levenshtein = (a, b) => {
-            if (a === b) return 0;
-            if (!a.length) return b.length;
-            if (!b.length) return a.length;
-            const row = Array.from({ length: a.length + 1 }, (_, i) => i);
-            for (let i = 1; i <= b.length; i++) {
-                let prev = i;
-                for (let j = 1; j <= a.length; j++) {
-                    const val = (b[i - 1] === a[j - 1]) ? row[j - 1] : Math.min(row[j - 1], row[j], prev) + 1;
-                    row[j - 1] = prev;
-                    prev = val;
-                }
-                row[a.length] = prev;
-            }
-            return row[a.length];
-        };
-        const getSimilarity = (s1, s2) => {
-            const maxLen = Math.max(s1.length, s2.length);
-            if (maxLen === 0) return 1.0;
-            return 1 - (levenshtein(s1, s2) / maxLen);
-        };
-        const scored = items.map(item => {
-            const cleanItem = normalize(item);
-            if (!cleanItem) return { item, score: 0 };
-            if (cleanItem === cleanQuery) return { item, score: 100 };
-            if (cleanItem.startsWith(cleanQuery)) return { item, score: 90 };
-            if (cleanItem.includes(cleanQuery)) return { item, score: 80 };
-            const itemTokens = cleanItem.split(/\s+/).filter(Boolean);
-            let totalTokenScore = 0;
-            let matchedCount = 0;
-            for (const qToken of queryTokens) {
-                let bestTokenSim = 0;
-                for (const iToken of itemTokens) {
-                    if (iToken === qToken) {
-                        bestTokenSim = 1.0;
-                        break;
-                    }
-                    if (iToken.startsWith(qToken) || qToken.startsWith(iToken)) {
-                        bestTokenSim = Math.max(bestTokenSim, 0.85);
-                    } else if (iToken.includes(qToken) || qToken.includes(iToken)) {
-                        bestTokenSim = Math.max(bestTokenSim, 0.7);
-                    } else if (qToken.length >= 3 && iToken.length >= 3) {
-                        const sim = getSimilarity(qToken, iToken);
-                        if (sim >= 0.6) {
-                            bestTokenSim = Math.max(bestTokenSim, sim * 0.8);
-                        }
-                    }
-                }
-                if (bestTokenSim > 0.3) {
-                    matchedCount++;
-                    totalTokenScore += bestTokenSim;
-                }
-            }
-            const queryCoverage = totalTokenScore / queryTokens.length;
-            const overallSim = getSimilarity(cleanQuery, cleanItem);
-            let score = (queryCoverage * 60) + (overallSim * 25);
-            if (matchedCount === queryTokens.length) score += 15;
-            return { item, score };
-        });
-
-        return scored
-            .filter(entry => entry.score >= 25)
-            .sort((a, b) => b.score - a.score)
-            .map(entry => entry.item);
-    }
-    async upload_to_s3(fileBuffer, fileName, contentType) {
+async function upload_file(buffer = [], file_name = '', content = 'application/octet-stream') {
+    let result = { url: '', expires: 0 };
+    try {
+        if (buffer.length > configs.max_file_size) throw new Error(`File size exceeds the maximum limit of ${configs.max_file_size / (1024 * 1024)} MB.`);
+        const blob = new Blob([buffer], { type: content });
         try {
-            const command = new PutObjectCommand({
-                Bucket: process.env.R2_BUCKET_NAME,
-                Key: fileName,
-                Body: fileBuffer,
-                ContentType: contentType,
+            const form = new FormData();
+            form.append('reqtype', 'fileupload');
+            form.append('time', '1h');
+            form.append('fileToUpload', blob, file_name);
+            const response = await axios.post('https://litterbox.catbox.moe/resources/internals/api.php', form, {
+                headers: form.getHeaders ? form.getHeaders() : { 'Content-Type': 'multipart/form-data' },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
             });
-            await s3Client.send(command);
-            const getCommand = new GetObjectCommand({
-                Bucket: process.env.R2_BUCKET_NAME,
-                Key: fileName,
-            });
-            const signedUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 86400 });
-            return signedUrl;
-        } catch (error) {
-            console.error("Failed to upload to S3 or generate signed URL:", error);
-            throw error;
+            result.url = response.data;
+            result.expires = Date.now() + (1000 * 60 * 60);
+        } catch (error) { console.error("Failed to upload to Litterbox:", error.message) };
+        if (!result.url) {
+            try {
+                const form = new FormData();
+                form.append('file', blob, file_name);
+                const response = await axios.post('https://tmpfiles.org/api/v1/upload', form, {
+                    headers: form.getHeaders ? form.getHeaders() : { 'Content-Type': 'multipart/form-data' },
+                    maxContentLength: Infinity,
+                    maxBodyLength: Infinity,
+                });
+                const data = response.data;
+                const text = await (await fetch(data.data?.url)).text();
+                const match = text.match(/https:\/\/tmpfiles\.org\/dl\/[^\s"']+/);
+                result.url = match[0];
+                result.expires = Date.now() + (1000 * 60 * 60);
+            } catch (error) { console.error("Failed to upload to Tmpfiles:", error.message) }
         }
+        if (!result.url) throw new Error('No data received from upload APIs');
+        return result;
+    } catch (error) {
+        console.error("Failed to upload file:", error);
+        throw error;
     }
 }
-const { load_cache, save_cache, advanced_search, upload_to_s3 } = new Helper();
-
-
-load_cache();
 
 app.get('/api', (req, res) => res.json({ message: "API is up and running!" }));
 
@@ -188,8 +104,8 @@ app.get('/api/download/:type', async (req, res) => {
     let temp = '', file_name = '';
 
     try {
-        const result = await download_queue.add(async () => {
-            if (!query) throw new Error('Query parameter is required', { cause: 400 });
+        if (!query) throw new Error('Query parameter is required', { cause: 400 });
+        const result = await _queue.add(async () => {
             if (type === 'yt') {
                 let url = query;
                 if (!/(?:https?:\/\/)?(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:watch\?v=|v\/|embed\/|shorts\/|playlist\?list=)?)([a-zA-Z0-9_-]{11})/i.test(query)) {
@@ -212,20 +128,17 @@ app.get('/api/download/:type', async (req, res) => {
                 const files = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(path.basename(output_base)));
                 if (!files.length) throw new Error('Downloaded file not found', { cause: 500 });
                 temp = path.join(os.tmpdir(), files[0]);
-                file_name = path.basename(temp);
+                file_name = `${Date.now()}_${path.basename(temp)}`;
                 data.mimetype = media === 'audio' ? 'audio/mpeg' : 'video/mp4';
-            } else if (type === 'movie') {
-                throw new Error("This endpoint has been deprecated", { cause: 400 });
             } else throw new Error('Unsupported download type', { cause: 400 });
 
             if (!temp || !fs.existsSync(temp)) throw new Error('Failed to prepare media file', { cause: 500 });
             const stats = fs.statSync(temp);
             data.size = stats.size;
-            const fileBuffer = fs.readFileSync(temp);
-            const unique = `${Date.now()}_${file_name}`;
-
-            data.url = await upload_to_s3(fileBuffer, unique, data.mimetype);
-            data.expires = Date.now() + (1000 * 60 * 60 * 24);
+            const buffer = fs.readFileSync(temp);
+            const uploaded = await upload_file(buffer, file_name, data.mimetype);
+            data.url = uploaded.url;
+            data.expires = uploaded.expires;
             return data;
         });
         res.json({ ...result });
@@ -237,7 +150,7 @@ app.get('/api/download/:type', async (req, res) => {
     }
 });
 
-app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
+app.post('/api/upload/:type', _upload.single('image'), async (req, res) => {
     const { type } = req.params;
     const file = req.file;
     const data = { mode: 'upload', mimetype: '', url: '', size: 0, expires: Infinity };
@@ -256,11 +169,12 @@ app.post('/api/upload/:type', upload.single('image'), async (req, res) => {
             data.mimetype = img.image.mime;
             data.url = img.display_url;
         } else if (type === 'file') {
-            const fileBuffer = fs.readFileSync(file.path);
+            const buffer = fs.readFileSync(file.path);
             const file_name = `${Date.now()}_${file.originalname || 'upload'}`;
             data.mimetype = file.mimetype || 'application/octet-stream';
-            data.url = await upload_to_s3(fileBuffer, file_name, data.mimetype);
-            data.expires = Date.now() + (1000 * 60 * 60 * 24);
+            const uploaded = await upload_file(buffer, file_name, data.mimetype);
+            data.url = uploaded.url;
+            data.expires = uploaded.expires;
         }
         res.json({ ...data });
     } catch (error) {
