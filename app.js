@@ -32,7 +32,6 @@ async function upload_file(buffer = [], file_name = '', content = 'application/o
             form.append('time', '1h');
             form.append('fileToUpload', blob, file_name);
             const response = await axios.post('https://litterbox.catbox.moe/resources/internals/api.php', form, {
-                headers: form.getHeaders ? form.getHeaders() : { 'Content-Type': 'multipart/form-data' },
                 maxContentLength: Infinity,
                 maxBodyLength: Infinity,
             });
@@ -44,12 +43,12 @@ async function upload_file(buffer = [], file_name = '', content = 'application/o
                 const form = new FormData();
                 form.append('file', blob, file_name);
                 const response = await axios.post('https://tmpfiles.org/api/v1/upload', form, {
-                    headers: form.getHeaders ? form.getHeaders() : { 'Content-Type': 'multipart/form-data' },
                     maxContentLength: Infinity,
                     maxBodyLength: Infinity,
                 });
                 const data = response.data;
-                const text = await (await fetch(data.data?.url)).text();
+                if (!data.data?.url) throw new Error('Upload failed');
+                const text = await (await fetch(data.data.url)).text();
                 const match = text.match(/https:\/\/tmpfiles\.org\/dl\/[^\s"']+/);
                 result.url = match[0];
                 result.expires = Date.now() + (1000 * 60 * 60);
@@ -116,7 +115,7 @@ app.get('/api/download/:type', async (req, res) => {
                     data.title = video.title;
                     data.thumbnail = video.thumbnail;
                 }
-                const output_base = path.join(os.tmpdir(), `${Date.now()}_download`);
+                const output_base = path.join(os.tmpdir(), `${Date.now()}_${(data.title || query).replace(/[^a-zA-Z0-9]/g, '_')}`);
                 await youtubeDl.exec(url, {
                     output: `${output_base}.%(ext)s`,
                     format: media === 'audio' ? 'bestaudio/best' : 'bestvideo*+bestaudio/best',
@@ -169,13 +168,14 @@ app.post('/api/upload/:type', _upload.single('image'), async (req, res) => {
             data.mimetype = img.image.mime;
             data.url = img.display_url;
         } else if (type === 'file') {
+            throw new Error('File upload is not supported in this version. Please use image upload instead.', { cause: 400 });
             const buffer = fs.readFileSync(file.path);
             const file_name = `${Date.now()}_${file.originalname || 'upload'}`;
             data.mimetype = file.mimetype || 'application/octet-stream';
             const uploaded = await upload_file(buffer, file_name, data.mimetype);
             data.url = uploaded.url;
             data.expires = uploaded.expires;
-        }
+        } else throw new Error('Unsupported upload type', { cause: 400 });
         res.json({ ...data });
     } catch (error) {
         console.error(error);
